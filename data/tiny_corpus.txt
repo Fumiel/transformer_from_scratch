@@ -1,0 +1,5 @@
+hello transformer.
+this is a tiny corpus for learning attention.
+we implement a small decoder only transformer from scratch.
+ai security starts with understanding how the model computes logits.
+prompt injection changes the distribution of next tokens.

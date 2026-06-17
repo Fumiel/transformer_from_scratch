@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build
+build/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# Artifacts
+checkpoints/
+weights/
+outputs/
+*.pt
+*.pth
+*.npy
+*.npz
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
