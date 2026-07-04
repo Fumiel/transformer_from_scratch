@@ -19,7 +19,8 @@ except ModuleNotFoundError:
 
 if torch is not None:
 
-    class FeedForward(nn.Module):
+    # [B, T, n_embd] -> [B, T, n_embd]
+    class FeedForward(nn.Module): # nn.Moduleを継承して層を作る。
         def __init__(self, config: TinyGPTConfig) -> None:
             super().__init__()
             self.fc1 = Linear(config.n_embd, 4 * config.n_embd)
@@ -38,7 +39,7 @@ if torch is not None:
             self.ffn = FeedForward(config)
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            x = x + self.attn(self.ln1(x))
+            x = x + self.attn(self.ln1(x)) # Residual connection.
             x = x + self.ffn(self.ln2(x))
             return x
 
@@ -60,9 +61,10 @@ if torch is not None:
                 raise ValueError("sequence length exceeds block_size")
 
             positions = torch.arange(seq_len, device=input_ids.device)  # [T]
+            # [B, T, C] + [1, T, C]
             x = self.token_embedding(input_ids) + self.position_embedding(positions)[None, :, :]
             for block in self.blocks:
                 x = block(x)
-            x = self.final_ln(x)
+            x = self.final_ln(x) # [B, T, C]
             logits = self.lm_head(x)  # [B, T, vocab_size]
             return logits
