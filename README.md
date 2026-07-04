@@ -112,7 +112,9 @@ C++との比較を優先するため、最初はdropoutを使いません。
 ### Tests
 
 - tokenizerのpytestは存在
-- Pythonモデル全体とC++再現性の検証はこれから追加
+- `FeedForward` / `TransformerBlock` / `TinyGPT` のpytestを追加済み
+- model系テストは `torch` が入っていない環境ではskipされる
+- C++再現性の検証はこれから追加
 
 ---
 
@@ -163,9 +165,9 @@ Transformer実装ではshape管理を最重要事項として扱います。
 | `logits` | `[B, T, vocab_size]` | 次token予測 |
 
 ```text
-B = batch size
-T = sequence length
-C = embedding dimension
+B = batch size：何個の系列を同時に処理するか
+T = sequence length：１つの系列の中にトークンが何個並んでいるか。T_max = block_size。
+C = embedding dimension：1トークンを何個の実数で表すか
 H = number of heads
 D = head dimension = C / H
 ```
@@ -205,7 +207,10 @@ transformer_from_scratch/
   │   ├─ model.cpp
   │   └─ weights_loader.cpp
   ├─ tests/
-  │   └─ test_tokenizer.py
+  │   ├─ test_tokenizer.py
+  │   ├─ test_feedforward.py
+  │   ├─ test_transformer_block.py
+  │   └─ test_tiny_gpt.py
   └─ docs/
       ├─ transformer_notes.md
       ├─ shape_table.md
@@ -247,6 +252,9 @@ cmake --build build
 ```bash
 pytest
 ```
+
+PyTorchが入っている場合はtokenizerテストに加えてmodel系テストも実行されます。
+PyTorchが入っていない場合は `pytest.importorskip("torch")` によりmodel系テストはskipされます。
 
 ### Python training
 
