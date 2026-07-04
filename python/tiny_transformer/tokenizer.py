@@ -6,11 +6,13 @@ class CharTokenizer:
 
     This tokenizer is intentionally small and transparent.
     It is useful for the first implementation round because every token is visible.
+
+    「1文字 = 1トークン」のtokenizer。
     """
 
     def __init__(self, text: str | None = None) -> None:
         if text is None:
-            chars = [chr(i) for i in range(128)]
+            chars = [chr(i) for i in range(128)] # ASCII文字をデフォルトの語彙とする。
         else:
             chars = sorted(set(text))
         self.stoi = {ch: i for i, ch in enumerate(chars)}
@@ -20,6 +22,9 @@ class CharTokenizer:
     def vocab_size(self) -> int:
         return len(self.stoi)
 
+    # 語彙に登録されていない文字は整数IDが作られず扱えないことを意識するために、
+    # unknown token -> intを定義しない。
+    # tokenizerでは大量の学習データからどのトークンを語彙に含めるかが大事。
     def encode(self, text: str) -> list[int]:
         try:
             return [self.stoi[ch] for ch in text]
