@@ -1,12 +1,11 @@
 import pytest
 
-torch = pytest.importorskip("torch")
-
 from tiny_transformer.config import TinyGPTConfig
 from tiny_transformer.model import TransformerBlock
 
 
 def test_transformer_block_preserves_shape() -> None:
+    torch = pytest.importorskip("torch")
     config = TinyGPTConfig(n_embd=8, n_head=2)
     block = TransformerBlock(config)
     x = torch.randn(2, 5, config.n_embd)
@@ -17,6 +16,7 @@ def test_transformer_block_preserves_shape() -> None:
 
 
 def test_transformer_block_uses_residual_path_when_sublayers_are_zeroed() -> None:
+    torch = pytest.importorskip("torch")
     config = TinyGPTConfig(n_embd=8, n_head=2)
     block = TransformerBlock(config)
     x = torch.randn(2, 5, config.n_embd)

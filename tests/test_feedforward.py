@@ -1,12 +1,11 @@
 import pytest
 
-torch = pytest.importorskip("torch")
-
 from tiny_transformer.config import TinyGPTConfig
 from tiny_transformer.model import FeedForward
 
 
 def test_feedforward_preserves_batch_and_sequence_shape() -> None:
+    torch = pytest.importorskip("torch")
     config = TinyGPTConfig(n_embd=8)
     ffn = FeedForward(config)
     x = torch.randn(2, 5, config.n_embd)
@@ -17,6 +16,7 @@ def test_feedforward_preserves_batch_and_sequence_shape() -> None:
 
 
 def test_feedforward_expands_hidden_dimension_then_projects_back() -> None:
+    pytest.importorskip("torch")
     config = TinyGPTConfig(n_embd=8)
     ffn = FeedForward(config)
 
