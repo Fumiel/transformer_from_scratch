@@ -71,6 +71,60 @@ LM Head
 next-token logits
 ```
 
+## What Is Custom vs PyTorch
+
+この実装では、Transformerの計算フローそのものは自作しつつ、テンソル計算基盤と一部の基本部品にPyTorchを使っています。
+
+### Forward Path Summary
+
+| step | role | custom implementation | PyTorch usage |
+|---|---|---|---|
+| Input handling | `input_ids` を受け取り系列長を検証 | `TinyGPT.forward` の制御フロー、`block_size` 超過時の例外処理 | `torch.Tensor` の shape 操作、`torch.arange` |
+| Token / Position Embedding | token埋め込みと位置埋め込みを作って加算 | forward内での接続方法 | `nn.Embedding` |
+| Transformer block repetition | blockを `n_layer` 回適用 | blockを順に適用するループ | `nn.ModuleList` |
+| LayerNorm | 最後の次元で平均・分散を計算し正規化、affine変換 | `LayerNorm` を自作 | `nn.Parameter`, `torch.mean`, `torch.var`, `torch.sqrt` |
+| Linear projection | 線形変換 `x @ W^T + b` | `Linear` を自作 | `nn.Parameter`, `torch.empty`, `torch.nn.init.kaiming_uniform_` |
+| Attention mask | 因果マスクを作成 | `causal_mask` を自作 | `torch.tril`, `torch.ones`, `view` |
+| Scaled dot-product attention | score計算、スケーリング、mask適用、softmax、value集約 | `scaled_dot_product_attention` を自作 | 行列積 `@`, `transpose`, `masked_fill`, `torch.softmax` |
+| Multi-head attention | QKV作成、head分割、attention計算、head結合、出力射影 | `MultiHeadCausalSelfAttention` を自作 | `split`, `view`, `transpose`, `contiguous` |
+| Feed Forward | `fc1 -> GELU -> fc2` | `FeedForward` を自作 | 内部で自作 `Linear` とPyTorchテンソル演算を使用 |
+| GELU | GPT系でよく使うtanh近似 | `gelu` を自作 | `torch.tanh` |
+| Residual connections | attention後・ffn後の残差加算 | `TransformerBlock.forward` を自作 | テンソル加算 |
+| Final normalization and LM head | 最終LayerNormと語彙方向への射影 | forwardの接続、自作 `LayerNorm` / `Linear` | PyTorchテンソル演算 |
+
+### High-Level Policy
+
+- 高レベルAPIの `torch.nn.Transformer` は使っていません。
+- 高レベルAPIの `torch.nn.MultiheadAttention` は使っていません。
+- Transformerの内部ロジックは、shapeを追いやすい形で自分で組んでいます。
+- PyTorchは主に、テンソル演算、パラメータ管理、埋め込み層、初期化に使っています。
+
+## Relation To Modern GPT
+
+この実装は教育用の最小構成ですが、現代のGPT系モデルと共通する骨格をいくつか持っています。一方で、実運用で重要になる高速化や安定化の工夫はかなり省いています。
+
+### Shared Design Choices
+
+- `Decoder-only Transformer` 構成です。
+- 次トークン予測のための `causal self-attention` を使っています。
+- `token embedding + position embedding` で入力表現を作っています。
+- `LayerNorm -> Attention -> Residual -> LayerNorm -> FeedForward -> Residual` というblock構造を採用しています。
+- FeedForwardは `n_embd -> 4 * n_embd -> n_embd` の拡張・圧縮構成です。
+- 最終 `LayerNorm` の後に `LM head` で語彙方向へ射影してlogitsを出します。
+
+### Simplifications Compared To Modern GPT
+
+| area | this repository | modern GPT-style models |
+|---|---|---|
+| Positional encoding | 学習可能な絶対位置埋め込み | RoPE などの回転位置埋め込みが主流 |
+| FeedForward activation | GELU | SwiGLU / GeGLU などがよく使われる |
+| Attention implementation | 素朴なscaled dot-product attention | FlashAttention系など高速化実装が一般的 |
+| Inference optimization | KV cacheなし | 長い生成ではKV cacheがほぼ必須 |
+| Regularization | dropoutなし | 学習時は各種正則化や安定化が入ることが多い |
+| Scale-oriented tweaks | 最小限 | 重み共有、初期化調整、normの細部最適化などが入ることが多い |
+
+このため、本実装は「現代GPTの本質的な計算の流れを学ぶための最小モデル」であり、「現代の大規模GPTの完全な再現」ではありません。
+
 初期設定は以下です。
 
 ```python
