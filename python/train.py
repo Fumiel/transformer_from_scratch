@@ -74,6 +74,83 @@ def save_checkpoint(
     )
 
 
+def train_model(
+    data_path: Path,
+    steps: int,
+    learning_rate: float,
+    checkpoint_path: Path,
+    log_every: int,
+    batch_size: int,
+    n_layer: int,
+    n_head: int,
+    n_embd: int,
+) -> tuple[Path, float]:
+    if steps < 1:
+        raise ValueError("--steps must be >= 1")
+    if log_every < 1:
+        raise ValueError("--log-every must be >= 1")
+    if batch_size < 1:
+        raise ValueError("--batch-size must be >= 1")
+
+    text = load_text(data_path)
+    tokenizer = CharTokenizer(text) # 学習データに出てくる文字のみを語彙とする。
+    token_ids = tokenizer.encode(text) # 全文を整数ID列へ。
+
+    # 正解トークン列は入力トークン列の1文字後ろにあるので、元データ長-1が、
+    # 1回に扱える最大系列長(block_size)の上限になる。
+    block_size = min(64, len(token_ids) - 1)
+    if block_size < 1:
+        raise ValueError("training data must contain at least 2 tokens")
+
+    config = TinyGPTConfig(
+        vocab_size=tokenizer.vocab_size,
+        block_size=block_size,
+        n_layer=n_layer,
+        n_head=n_head,
+        n_embd=n_embd,
+    )
+
+    # GPUがある場合はcudaを選ぶ。
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = TinyGPT(config).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+    model.train()
+    last_loss = 0.0
+    for step in range(1, steps + 1):
+        # 毎回ランダムにバッチを作る。
+        x, y = build_training_batch(
+            token_ids,
+            block_size=config.block_size,
+            batch_size=batch_size,
+            device=device,
+        )
+        optimizer.zero_grad()
+        logits = model(x) # [B, T] -> [B, T, vocab_size]
+        # F.cross_entropyは内部でsoftmaxを計算するので、logitsをsoftmaxに通す必要はない。
+        loss = F.cross_entropy(logits.view(-1, config.vocab_size), y.view(-1))
+        # loss -> cross entropy -> lm_head -> TransformerBlock ->
+        # attention, ffn -> embeddingの順に各パラメータについて勾配を計算。
+        loss.backward()
+        optimizer.step()
+
+        last_loss = loss.item()
+        if step == 1 or step % log_every == 0 or step == steps:
+            print(f"step={step} loss={last_loss:.6f}")
+
+    save_checkpoint(
+        checkpoint_path=checkpoint_path,
+        model=model,
+        optimizer=optimizer,
+        config=config,
+        tokenizer=tokenizer,
+        step=steps,
+        loss=last_loss,
+    )
+    print(f"saved checkpoint to {checkpoint_path}")
+    return checkpoint_path, last_loss
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=Path, default=Path("data/tiny_corpus.txt"))
@@ -87,69 +164,17 @@ def main() -> None:
     parser.add_argument("--n-embd", type=int, default=64)
     args = parser.parse_args()
 
-    if args.steps < 1:
-        raise ValueError("--steps must be >= 1")
-    if args.log_every < 1:
-        raise ValueError("--log-every must be >= 1")
-    if args.batch_size < 1:
-        raise ValueError("--batch-size must be >= 1")
-
-    text = load_text(args.data)
-    tokenizer = CharTokenizer(text) # 学習データに出てくる文字のみを語彙とする。
-    token_ids = tokenizer.encode(text) # 全文を整数ID列へ。
-
-    # 正解トークン列は入力トークン列の1文字後ろにあるので、元データ長-1が、
-    # 1回に扱える最大系列長(block_size)の上限になる。
-    block_size = min(64, len(token_ids) - 1)
-    if block_size < 1:
-        raise ValueError("training data must contain at least 2 tokens")
-
-    config = TinyGPTConfig(
-        vocab_size=tokenizer.vocab_size,
-        block_size=block_size,
+    train_model(
+        data_path=args.data,
+        steps=args.steps,
+        learning_rate=args.learning_rate,
+        checkpoint_path=args.checkpoint,
+        log_every=args.log_every,
+        batch_size=args.batch_size,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
     )
-
-    # GPUがある場合はcudaを選ぶ。
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = TinyGPT(config).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
-
-    model.train()
-    last_loss = 0.0
-    for step in range(1, args.steps + 1):
-        # 毎回ランダムにバッチを作る。
-        x, y = build_training_batch(
-            token_ids,
-            block_size=config.block_size,
-            batch_size=args.batch_size,
-            device=device,
-        )
-        optimizer.zero_grad()
-        logits = model(x) # [B, T] -> [B, T, vocab_size]
-        # F.cross_entropyは内部でsoftmaxを計算するので、logitsをsoftmaxに通す必要はない。
-        loss = F.cross_entropy(logits.view(-1, config.vocab_size), y.view(-1))
-        # loss -> cross entropy -> lm_head -> TransformerBlock ->
-        # attention, ffn -> embeddingの順に各パラメータについて勾配を計算。
-        loss.backward()
-        optimizer.step()
-
-        last_loss = loss.item()
-        if step == 1 or step % args.log_every == 0 or step == args.steps:
-            print(f"step={step} loss={last_loss:.6f}")
-
-    save_checkpoint(
-        checkpoint_path=args.checkpoint,
-        model=model,
-        optimizer=optimizer,
-        config=config,
-        tokenizer=tokenizer,
-        step=args.steps,
-        loss=last_loss,
-    )
-    print(f"saved checkpoint to {args.checkpoint}")
 
 
 if __name__ == "__main__":

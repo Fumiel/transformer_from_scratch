@@ -5,7 +5,7 @@ import pytest
 
 from tiny_transformer import CharTokenizer, TinyGPTConfig
 from tiny_transformer.model import TinyGPT
-from train import build_training_batch, main, save_checkpoint
+from train import build_training_batch, main, save_checkpoint, train_model
 
 
 def test_build_training_batch_shifts_targets_by_one_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,3 +101,27 @@ def test_main_runs_training_and_writes_checkpoint(tmp_path: Path, monkeypatch: p
     main()
 
     assert checkpoint_path.exists()
+
+
+def test_train_model_returns_checkpoint_path_and_loss(tmp_path: Path) -> None:
+    pytest.importorskip("torch")
+
+    data_path = tmp_path / "corpus.txt"
+    checkpoint_path = tmp_path / "tiny.pt"
+    data_path.write_text("hello transformer training loop\n" * 8, encoding="utf-8")
+
+    returned_checkpoint, final_loss = train_model(
+        data_path=data_path,
+        steps=2,
+        learning_rate=1e-3,
+        checkpoint_path=checkpoint_path,
+        log_every=1,
+        batch_size=2,
+        n_layer=1,
+        n_head=2,
+        n_embd=8,
+    )
+
+    assert returned_checkpoint == checkpoint_path
+    assert checkpoint_path.exists()
+    assert isinstance(final_loss, float)

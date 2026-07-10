@@ -276,6 +276,7 @@ transformer_from_scratch/
   ├─ python/
   │   ├─ train.py
   │   ├─ generate.py
+  │   ├─ run_experiment.py
   │   ├─ export_weights.py
   │   ├─ compare_cpp.py
   │   └─ tiny_transformer/
@@ -302,6 +303,7 @@ transformer_from_scratch/
   │   ├─ test_feedforward.py
   │   ├─ test_transformer_block.py
   │   ├─ test_generate.py
+  │   ├─ test_run_experiment.py
   │   ├─ test_tiny_gpt.py
   │   └─ test_train.py
   └─ docs/
@@ -365,6 +367,45 @@ python python/train.py --data data/tiny_corpus.txt --steps 1000
 
 ```bash
 python python/generate.py --checkpoint checkpoints/tiny.pt --prompt "hello" --max-new-tokens 100
+```
+
+### Train + generation log
+
+`run_experiment.py` は学習、生成、結果ログ保存を1回で実行します。
+checkpointごとの比較を残したいときは、`--checkpoint` と `--output-log` を指定して使います。
+
+```bash
+python python/run_experiment.py \
+  --data data/tiny_corpus.txt \
+  --steps 200 \
+  --batch-size 4 \
+  --n-layer 1 \
+  --n-head 2 \
+  --n-embd 8 \
+  --checkpoint checkpoints/tiny_200.pt \
+  --prompt "hello" \
+  --max-new-tokens 40 \
+  --output-log outputs/generation_log.md
+```
+
+このスクリプトは次を行います。
+
+- `train.py` 相当の学習を実行してcheckpointを保存する
+- 保存したcheckpointを読み込んで `generate.py` 相当のgreedy decodingを行う
+- 実行条件と生成結果を `outputs/generation_log.md` に追記する
+
+checkpoint比較の基本手順:
+
+1. `--steps` と `--checkpoint` を変えて複数回実行する
+2. prompt は同じにそろえる
+3. `outputs/generation_log.md` の生成結果と `final_loss` を見比べる
+
+例:
+
+```bash
+python python/run_experiment.py --steps 200 --checkpoint checkpoints/tiny_200.pt --prompt "hello"
+python python/run_experiment.py --steps 500 --checkpoint checkpoints/tiny_500.pt --prompt "hello"
+python python/run_experiment.py --steps 1000 --checkpoint checkpoints/tiny_1000.pt --prompt "hello"
 ```
 
 ### Export weights

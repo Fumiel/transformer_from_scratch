@@ -29,6 +29,7 @@ if torch is not None:
             # バイアスは通常、学習開始時に大きくずれないように0で初期化される。
             self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
             # ランダム値。
+            # kaiming_uniform_ は、小規模実装向けで深くした時の安定性には注意。
             torch.nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
