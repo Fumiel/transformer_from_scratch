@@ -184,7 +184,7 @@ C++との比較を優先するため、最初はdropoutを使いません。
 - `MultiHeadCausalSelfAttention` は実装済み
 - `TransformerBlock` と `TinyGPT` のforwardは実装済み
 - `train.py` は最小学習ループとcheckpoint保存まで実装済み
-- `generate.py` は未実装
+- `generate.py` はcheckpoint読込とgreedy decodingまで実装済み
 - `export_weights.py` は未実装
 - `compare_cpp.py` は未実装
 
@@ -201,6 +201,7 @@ C++との比較を優先するため、最初はdropoutを使いません。
 - `Linear` / `LayerNorm` / `GELU` のpytestを追加済み
 - causal mask / attention / `FeedForward` / `TransformerBlock` / `TinyGPT` のpytestを追加済み
 - `train.py` のbatch生成、checkpoint保存、短い学習実行のpytestを追加済み
+- `generate.py` のcheckpoint復元、greedy decoding、文脈切り詰めのpytestを追加済み
 - model系テストは `torch` が入っていない環境ではskipされる
 - C++再現性の検証はこれから追加
 
@@ -300,6 +301,7 @@ transformer_from_scratch/
   │   ├─ test_tokenizer.py
   │   ├─ test_feedforward.py
   │   ├─ test_transformer_block.py
+  │   ├─ test_generate.py
   │   ├─ test_tiny_gpt.py
   │   └─ test_train.py
   └─ docs/
@@ -358,10 +360,11 @@ python python/train.py --data data/tiny_corpus.txt --steps 1000
 
 ### Text generation
 
-現時点ではCLIだけあり、生成本体は未実装です。
+`generate.py` は `train.py` が保存したcheckpointを読み込み、promptからgreedy decodingで文字を生成します。
+系列が `block_size` を超える場合は、末尾 `block_size` tokenだけを文脈としてモデルへ渡します。
 
 ```bash
-python python/generate.py --prompt "hello" --max-new-tokens 100
+python python/generate.py --checkpoint checkpoints/tiny.pt --prompt "hello" --max-new-tokens 100
 ```
 
 ### Export weights
@@ -396,7 +399,7 @@ python python/compare_cpp.py --checkpoint checkpoints/tiny.pt --cpp-output outpu
 
 - training loopを実装済み
 - lossが下がる最小学習条件を作成済み
-- 文字レベル生成まで通す
+- 文字レベル生成をgreedy decodingで実装済み
 
 ### Phase 2: Weight export
 

@@ -72,6 +72,11 @@
 - greedy decodingができる
 - top-k samplingは発展課題
 
+実装状況:
+
+- checkpoint読込、config / vocab復元、`TinyGPT` への重みロードは実装済み
+- greedy decoding、生成tokenの連結、decode、`block_size` 超過時の文脈切り詰めは実装済み
+
 ### #9 Python: 重みexportを実装する
 
 目的: PyTorch checkpointをC++で読める形にする。  
