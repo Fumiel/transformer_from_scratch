@@ -99,6 +99,38 @@ next-token logits
 - Transformerの内部ロジックは、shapeを追いやすい形で自分で組んでいます。
 - PyTorchは主に、テンソル演算、パラメータ管理、埋め込み層、初期化に使っています。
 
+## Trainable Parameters
+
+`train.py` では `optimizer = torch.optim.AdamW(model.parameters(), ...)` を使っているため、
+学習対象は `TinyGPT` の `nn.Parameter` 全体です。クラス構造に沿うと、主に次の重みが更新されます。
+
+```text
+TinyGPT
+├─ token_embedding.weight
+├─ position_embedding.weight
+├─ blocks[i].ln1.weight
+├─ blocks[i].ln1.bias
+├─ blocks[i].attn.qkv_proj.weight
+├─ blocks[i].attn.qkv_proj.bias
+├─ blocks[i].attn.out_proj.weight
+├─ blocks[i].attn.out_proj.bias
+├─ blocks[i].ln2.weight
+├─ blocks[i].ln2.bias
+├─ blocks[i].ffn.fc1.weight
+├─ blocks[i].ffn.fc1.bias
+├─ blocks[i].ffn.fc2.weight
+├─ blocks[i].ffn.fc2.bias
+├─ final_ln.weight
+├─ final_ln.bias
+└─ lm_head.weight
+```
+
+補足:
+
+- `blocks[i]` は各 Transformer block を表します。`n_layer=2` なら `blocks[0]` と `blocks[1]` があります。
+- 学習対象ではないものは `input_ids`, `x`, `y`, `logits`, `loss`, `block_size`, tokenizer の `stoi/itos`, causal mask などです。
+- `lm_head` は `bias=False` なので、ここでは `weight` だけが学習されます。
+
 ## Relation To Modern GPT
 
 この実装は教育用の最小構成ですが、現代のGPT系モデルと共通する骨格をいくつか持っています。一方で、実運用で重要になる高速化や安定化の工夫はかなり省いています。
@@ -151,7 +183,7 @@ C++との比較を優先するため、最初はdropoutを使いません。
 - causal mask と scaled dot-product attention は実装済み
 - `MultiHeadCausalSelfAttention` は実装済み
 - `TransformerBlock` と `TinyGPT` のforwardは実装済み
-- `train.py` は未実装
+- `train.py` は最小学習ループとcheckpoint保存まで実装済み
 - `generate.py` は未実装
 - `export_weights.py` は未実装
 - `compare_cpp.py` は未実装
@@ -166,7 +198,9 @@ C++との比較を優先するため、最初はdropoutを使いません。
 ### Tests
 
 - tokenizerのpytestは存在
-- `FeedForward` / `TransformerBlock` / `TinyGPT` のpytestを追加済み
+- `Linear` / `LayerNorm` / `GELU` のpytestを追加済み
+- causal mask / attention / `FeedForward` / `TransformerBlock` / `TinyGPT` のpytestを追加済み
+- `train.py` のbatch生成、checkpoint保存、短い学習実行のpytestを追加済み
 - model系テストは `torch` が入っていない環境ではskipされる
 - C++再現性の検証はこれから追加
 
@@ -261,10 +295,13 @@ transformer_from_scratch/
   │   ├─ model.cpp
   │   └─ weights_loader.cpp
   ├─ tests/
+  │   ├─ test_attention.py
+  │   ├─ test_layers.py
   │   ├─ test_tokenizer.py
   │   ├─ test_feedforward.py
   │   ├─ test_transformer_block.py
-  │   └─ test_tiny_gpt.py
+  │   ├─ test_tiny_gpt.py
+  │   └─ test_train.py
   └─ docs/
       ├─ transformer_notes.md
       ├─ shape_table.md
@@ -312,7 +349,8 @@ PyTorchが入っていない場合は `pytest.importorskip("torch")` によりmo
 
 ### Python training
 
-現時点ではCLIだけあり、学習ループ本体は未実装です。
+`train.py` は最小の next-token prediction 学習ループを持ちます。
+テキスト読込、tokenize、ランダム subsequence batch 作成、loss 計算、optimizer 更新、checkpoint 保存まで実装済みです。
 
 ```bash
 python python/train.py --data data/tiny_corpus.txt --steps 1000
@@ -356,8 +394,8 @@ python python/compare_cpp.py --checkpoint checkpoints/tiny.pt --cpp-output outpu
 
 ### Phase 1: Python training path
 
-- training loopを実装する
-- lossが下がる最小学習条件を作る
+- training loopを実装済み
+- lossが下がる最小学習条件を作成済み
 - 文字レベル生成まで通す
 
 ### Phase 2: Weight export
