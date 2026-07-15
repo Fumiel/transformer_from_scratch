@@ -110,8 +110,14 @@ def train_model(
         n_embd=n_embd,
     )
 
-    # GPUがある場合はcudaを選ぶ。
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # CUDA、MPS、CPUの順に利用可能なデバイスを選ぶ。
+    device = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
     model = TinyGPT(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 

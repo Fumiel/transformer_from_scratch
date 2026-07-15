@@ -61,6 +61,68 @@ def test_generate_text_truncates_context_to_block_size() -> None:
     assert generated == "bbba"
 
 
+def test_generate_text_can_return_step_traces_without_changing_text() -> None:
+    torch = pytest.importorskip("torch")
+
+    tokenizer = tokenizer_from_vocab(["a", "b"])
+    config = TinyGPTConfig(vocab_size=2, block_size=2, n_layer=1, n_head=1, n_embd=4)
+    model = TinyGPT(config)
+    zero_model_parameters(model)
+
+    generated, trace = generate_text(
+        model=model,
+        tokenizer=tokenizer,
+        config=config,
+        prompt="bbb",
+        max_new_tokens=2,
+        device=torch.device("cpu"),
+        return_trace=True,
+        trace_top_k=2,
+    )
+
+    assert generated == "bbbaa"
+    assert trace.prompt == "bbb"
+    assert trace.prompt_token_ids == [1, 1, 1]
+    assert trace.decoding_method == "greedy"
+    assert trace.generated_token_ids == [1, 1, 1, 0, 0]
+    assert trace.generated_text == generated
+    assert len(trace.steps) == 2
+
+    first_step, second_step = trace.steps
+    assert first_step.step == 0
+    assert first_step.context_start == 1
+    assert first_step.context_token_ids == [1, 1]
+    assert first_step.context_text == "bb"
+    assert first_step.selected_token_id == 0
+    assert first_step.selected_token == "a"
+    assert len(first_step.top_k) == 2
+    assert first_step.model_trace.input_ids.tolist() == [[1, 1]]
+    assert second_step.step == 1
+    assert second_step.context_start == 2
+    assert second_step.context_token_ids == [1, 0]
+    assert second_step.context_text == "ba"
+
+
+def test_generate_text_rejects_non_positive_trace_top_k() -> None:
+    torch = pytest.importorskip("torch")
+
+    tokenizer = tokenizer_from_vocab(["a", "b"])
+    config = TinyGPTConfig(vocab_size=2, block_size=2, n_layer=1, n_head=1, n_embd=4)
+    model = TinyGPT(config)
+
+    with pytest.raises(ValueError, match="trace_top_k must be >= 1"):
+        generate_text(
+            model=model,
+            tokenizer=tokenizer,
+            config=config,
+            prompt="b",
+            max_new_tokens=1,
+            device=torch.device("cpu"),
+            return_trace=True,
+            trace_top_k=0,
+        )
+
+
 def test_load_checkpoint_restores_model_config_and_vocab(tmp_path: Path) -> None:
     torch = pytest.importorskip("torch")
 

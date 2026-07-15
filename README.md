@@ -184,7 +184,8 @@ C++との比較を優先するため、最初はdropoutを使いません。
 - `MultiHeadCausalSelfAttention` は実装済み
 - `TransformerBlock` と `TinyGPT` のforwardは実装済み
 - `train.py` は最小学習ループとcheckpoint保存まで実装済み
-- `generate.py` はcheckpoint読込とgreedy decodingまで実装済み
+- `generate.py` はcheckpoint読込、greedy decoding、生成ステップごとのtrace取得に対応済み
+- `tracing.py` はembedding、block、attention、FFN、logits、生成メタデータのtrace用dataclassを提供
 - `export_weights.py` は未実装
 - `compare_cpp.py` は未実装
 
@@ -202,6 +203,7 @@ C++との比較を優先するため、最初はdropoutを使いません。
 - causal mask / attention / `FeedForward` / `TransformerBlock` / `TinyGPT` のpytestを追加済み
 - `train.py` のbatch生成、checkpoint保存、短い学習実行のpytestを追加済み
 - `generate.py` のcheckpoint復元、greedy decoding、文脈切り詰めのpytestを追加済み
+- traceのshape、causal mask、residual加算、top-k、生成ステップのメタデータを検証するpytestを追加済み
 - model系テストは `torch` が入っていない環境ではskipされる
 - C++再現性の検証はこれから追加
 
@@ -243,7 +245,7 @@ Transformer実装ではshape管理を最重要事項として扱います。
 |---|---:|---|
 | `input_ids` | `[B, T]` | token ID列 |
 | `token_emb` | `[B, T, C]` | token embedding |
-| `pos_emb` | `[T, C]` | position embedding |
+| `pos_emb` | `[1, T, C]` | batch方向にbroadcastするposition embedding |
 | `x` | `[B, T, C]` | block入力 |
 | `q, k, v` | `[B, T, C]` | query / key / value |
 | `q reshaped` | `[B, H, T, D]` | head分割後 |
@@ -284,7 +286,8 @@ transformer_from_scratch/
   │       ├─ config.py
   │       ├─ layers.py
   │       ├─ attention.py
-  │       └─ model.py
+  │       ├─ model.py
+  │       └─ tracing.py
   ├─ cpp/
   │   ├─ main.cpp
   │   ├─ tensor.hpp
@@ -303,6 +306,7 @@ transformer_from_scratch/
   │   ├─ test_feedforward.py
   │   ├─ test_transformer_block.py
   │   ├─ test_generate.py
+  │   ├─ test_tracing.py
   │   ├─ test_run_experiment.py
   │   ├─ test_tiny_gpt.py
   │   └─ test_train.py
@@ -368,6 +372,97 @@ python python/train.py --data data/tiny_corpus.txt --steps 1000
 ```bash
 python python/generate.py --checkpoint checkpoints/tiny.pt --prompt "hello" --max-new-tokens 100
 ```
+
+### Internal representation tracing
+
+通常の学習・生成コマンドは従来どおりです。内部表現の取得は、Python APIで
+`return_trace=True` を明示した場合だけ有効になります。通常の `model(input_ids)` や
+`generate_text(...)` は、従来どおり logits または生成文字列だけを返します。
+
+`model(input_ids, return_trace=True)` で取得する `ModelTrace` には次の情報が含まれます。
+
+| 区分 | 主な取得内容 | shape |
+|---|---|---|
+| 入力 | token ID、token embedding、position embedding、その和 | `[B,T]`, `[B,T,C]` |
+| block | block入力・出力、LayerNorm出力 | `[B,T,C]` |
+| attention | Q/K/V、score、mask後score、probability、head出力、結合後出力、出力射影 | `[B,H,T,D]`, `[B,H,T,T]`, `[B,T,C]` |
+| FFN | `fc1` 出力、GELU出力、`fc2` 出力 | `[B,T,4C]`, `[B,T,C]` |
+| residual | attention/FFNの加算量と加算後の表現 | `[B,T,C]` |
+| 出力 | final LayerNorm出力、全logits、各位置のtop-k ID/logit/確率 | `[B,T,C]`, `[B,T,V]`, `[B,T,K]` |
+
+trace内のtensorは `detach()`、CPU転送、`clone()` を行った独立したsnapshotです。
+そのため計算グラフやGPU/MPSメモリを保持しません。これは推論時の観測用であり、
+activationに対する勾配解析には使いません。
+
+checkpointから1回のforwardの内部表現を取得する例です。
+
+```bash
+PYTHONPATH=python python - <<'PY'
+from pathlib import Path
+import torch
+
+from generate import load_checkpoint
+
+device = torch.device(
+    "cuda" if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available()
+    else "cpu"
+)
+model, tokenizer, _ = load_checkpoint(Path("checkpoints/tiny.pt"), device)
+input_ids = torch.tensor([tokenizer.encode("hello")], dtype=torch.long, device=device)
+
+logits, trace = model(input_ids, return_trace=True, top_k=5)
+print(trace.token_embedding.shape)                 # [1, T, C]
+print(trace.blocks[0].attention.probabilities.shape)  # [1, H, T, T]
+print(trace.top_k_ids[0, -1].tolist())
+
+Path("outputs").mkdir(exist_ok=True)
+torch.save(trace, "outputs/forward_trace.pt")
+PY
+```
+
+生成中の各ステップを観測する場合は、`generate_text` に `return_trace=True` を渡します。
+`GenerationTrace.steps` の各要素には、切り詰め後のcontext、元の生成列における
+`context_start`、選択token、最終位置のtop-k、対応する `ModelTrace` が含まれます。
+
+```bash
+PYTHONPATH=python python - <<'PY'
+from pathlib import Path
+import torch
+
+from generate import generate_text, load_checkpoint
+
+device = torch.device(
+    "cuda" if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available()
+    else "cpu"
+)
+model, tokenizer, config = load_checkpoint(Path("checkpoints/tiny.pt"), device)
+generated, trace = generate_text(
+    model=model,
+    tokenizer=tokenizer,
+    config=config,
+    prompt="hello",
+    max_new_tokens=20,
+    device=device,
+    return_trace=True,
+    trace_top_k=5,
+)
+print(generated)
+print(trace.steps[0].top_k)
+
+Path("outputs").mkdir(exist_ok=True)
+torch.save(trace, "outputs/generation_trace.pt")
+PY
+```
+
+`top_k` / `trace_top_k` は、次token候補のうち logit が高い順に残す個数です。
+語彙数より大きい値を指定した場合は、語彙数に制限されます。traceは入力token列や
+内部表現を含むため、機密データを使う実験では保存先と共有範囲を管理してください。
+
+`run_experiment.py` は現在、学習設定・最終loss・生成文を
+`outputs/generation_log.md` に記録しますが、traceファイルの自動保存は行いません。
+内部表現を保存する場合は上記のPython APIを使います。
 
 ### Train + generation log
 
