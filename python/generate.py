@@ -133,6 +133,8 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, default=Path("checkpoints/tiny.pt"))
     parser.add_argument("--prompt", type=str, default="hello")
     parser.add_argument("--max-new-tokens", type=int, default=100)
+    parser.add_argument("--trace-output", type=Path)
+    parser.add_argument("--trace-top-k", type=int, default=5)
     args = parser.parse_args()
 
     # CUDA、MPS、CPUの順に利用可能なデバイスを選ぶ。
@@ -144,15 +146,25 @@ def main() -> None:
         else "cpu"
     )
     model, tokenizer, config = load_checkpoint(args.checkpoint, device=device)
-    generated = generate_text(
+    generation_result = generate_text(
         model=model,
         tokenizer=tokenizer,
         config=config,
         prompt=args.prompt,
         max_new_tokens=args.max_new_tokens,
         device=device,
+        return_trace=args.trace_output is not None,
+        trace_top_k=args.trace_top_k,
     )
+    if args.trace_output is not None:
+        generated, trace = generation_result
+        args.trace_output.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(trace, args.trace_output)
+    else:
+        generated = generation_result
     print(generated)
+    if args.trace_output is not None:
+        print(f"saved generation trace to {args.trace_output}")
 
 
 if __name__ == "__main__":

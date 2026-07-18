@@ -188,3 +188,54 @@ def test_main_prints_generated_text(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     main()
 
     assert capsys.readouterr().out == "baa\n"
+
+
+def test_main_saves_generation_trace_when_requested(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    torch = pytest.importorskip("torch")
+
+    tokenizer = tokenizer_from_vocab(["a", "b"])
+    config = TinyGPTConfig(vocab_size=2, block_size=2, n_layer=1, n_head=1, n_embd=4)
+    model = TinyGPT(config)
+    zero_model_parameters(model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    checkpoint_path = tmp_path / "tiny.pt"
+    trace_path = tmp_path / "nested" / "generation_trace.pt"
+    save_checkpoint(
+        checkpoint_path=checkpoint_path,
+        model=model,
+        optimizer=optimizer,
+        config=config,
+        tokenizer=tokenizer,
+        step=1,
+        loss=0.5,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate.py",
+            "--checkpoint",
+            str(checkpoint_path),
+            "--prompt",
+            "b",
+            "--max-new-tokens",
+            "2",
+            "--trace-output",
+            str(trace_path),
+            "--trace-top-k",
+            "2",
+        ],
+    )
+
+    main()
+
+    output = capsys.readouterr().out
+    trace = torch.load(trace_path, map_location="cpu", weights_only=False)
+    assert output == f"baa\nsaved generation trace to {trace_path}\n"
+    assert trace.generated_text == "baa"
+    assert len(trace.steps) == 2
+    assert len(trace.steps[0].top_k) == 2
